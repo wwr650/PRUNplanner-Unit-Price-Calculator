@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "PRUNplanner Unit Price Calculator",
+  "version": "1.1.0",
+  "description": "Automatically calculates and displays unit price (利润差值/差值) in PRUNplanner Empire Material IO table",
+  "permissions": [],
+  "content_scripts": [
+    {
+      "matches": ["*://prunplanner.org/*", "*://localhost/*", "file:///*/test-page.html"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

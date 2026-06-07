@@ -1,0 +1,29 @@
+﻿{
+  "name": "prunplanner-extension",
+  "version": "1.1.0",
+  "description": "PRUNplanner Unit Price Calculator - Edge/Chrome Browser Extension",
+  "main": "content.js",
+  "scripts": {
+    "test": "echo \"Open test-page.html in browser to test\"",
+    "install": "echo \"Follow installation guide in INSTALL.md\"",
+    "generate-icons": "echo \"Open generate-icons.html in browser\""
+  },
+  "keywords": [
+    "prunplanner",
+    "browser-extension",
+    "edge-extension",
+    "chrome-extension",
+    "unit-price",
+    "calculator"
+  ],
+  "author": "PRUNplanner Community",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "bugs": {
+    "url": ""
+  },
+  "homepage": "https://prunplanner.org"
+}
