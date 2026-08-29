@@ -1,0 +1,87 @@
+name: Build & Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '仅构建与打标签，不创建 Release'
+        type: boolean
+        required: false
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build package and publish release
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version from manifest.json
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw manifest.json | ConvertFrom-Json).version
+          Write-Host "Detected version: $version"
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "ZIP_NAME=PRUNplanner-Unit-Price-Calculator-$version.zip" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build zip package
+        shell: pwsh
+        run: |
+          $items = @(
+            '.gitignore', 'CONTRIBUTING.md', 'LICENSE', 'README.md', 'INSTALL.md',
+            'PROJECT_SUMMARY.md', 'LOCATION_CHANGE.md', 'content.js', 'manifest.json',
+            'package.json', 'generate-icons.html', 'install.ps1', 'test-page.html', 'icons'
+          )
+          Compress-Archive -Path $items -DestinationPath $env:ZIP_NAME -Force
+          Write-Host "Created $env:ZIP_NAME"
+
+      - name: Verify package version
+        shell: pwsh
+        run: |
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $archive = [System.IO.Compression.ZipFile]::OpenRead($env:ZIP_NAME)
+          $entry = $archive.Entries | Where-Object { $_.Name -eq 'manifest.json' }
+          $reader = New-Object System.IO.StreamReader($entry.Open())
+          $content = $reader.ReadToEnd()
+          $reader.Close()
+          $archive.Dispose()
+          $zipVersion = [regex]::Match($content, '"version":\s*"([^"]+)"').Groups[1].Value
+          if ($zipVersion -ne $env:VERSION) {
+            throw "Version mismatch: zip=$zipVersion expected=$env:VERSION"
+          }
+          Write-Host "Verified: $env:ZIP_NAME contains manifest version $zipVersion"
+
+      - name: Create and push git tag
+        shell: pwsh
+        run: |
+          $tag = "v$env:VERSION"
+          $exists = git ls-remote --tags origin "refs/tags/$tag"
+          if ($exists) {
+            Write-Host "Tag $tag already exists, skipping"
+          } else {
+            git tag $tag
+            git push origin $tag
+            Write-Host "Pushed tag $tag"
+          }
+
+      - name: Publish GitHub Release
+        if: ${{ !inputs.dry_run }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "v$env:VERSION"
+          $releaseExists = $false
+          gh release view $tag --json tagName 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { $releaseExists = $true }
+          if (-not $releaseExists) {
+            gh release create $tag $env:ZIP_NAME --title $tag --generate-notes
+            Write-Host "Created release $tag with $env:ZIP_NAME"
+          } else {
+            gh release upload $tag $env:ZIP_NAME --clobber
+            Write-Host "Release $tag exists, uploaded/updated $env:ZIP_NAME"
+          }

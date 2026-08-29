@@ -21,6 +21,15 @@
     debounceDelay: 500
   };
 
+  // Shared style for unit price cells (used by add and update)
+  const UNIT_PRICE_CELL_STYLE = `
+    padding: 8px;
+    text-align: center;
+    font-family: monospace;
+    font-weight: bold;
+    border: 1px solid rgba(255,255,255,0.05);
+  `;
+
   /**
    * Format number with locale and decimal places
    */
@@ -194,16 +203,54 @@
       thead.appendChild(headerCell);
     }
 
-    // Add data cells
+    // Add placeholder cells for existing rows (values are filled by updateUnitPriceCells)
+    const tbody = table.querySelector('tbody');
+    if (tbody) {
+      const rows = tbody.querySelectorAll('tr');
+      rows.forEach((row) => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length <= deltaIndex || cells.length <= valueIndex) {
+          return;
+        }
+
+        const newCell = document.createElement('td');
+        newCell.dataset.unitPrice = 'true';
+        newCell.style.cssText = UNIT_PRICE_CELL_STYLE;
+        row.appendChild(newCell);
+      });
+    }
+
+    // Fill in the calculated values
+    updateUnitPriceCells(table, tableType);
+  }
+
+  /**
+   * Recalculate and update the values of the unit price column.
+   * Handles data changes, newly added rows, and re-rendered table bodies.
+   */
+  function updateUnitPriceCells(table, tableType) {
+    const headers = Array.from(table.querySelectorAll('thead th'));
+    const unitPriceIndex = headers.findIndex(h => {
+      const text = h.textContent.trim();
+      return text.includes('单价') || text.includes('Unit Price');
+    });
+
+    if (unitPriceIndex === -1) {
+      return;
+    }
+
+    const { deltaIndex, valueIndex } = findColumnIndices(table, tableType);
+    if (deltaIndex === -1 || valueIndex === -1) {
+      return;
+    }
+
     const tbody = table.querySelector('tbody');
     if (!tbody) {
       return;
     }
 
     const rows = tbody.querySelectorAll('tr');
-    let processedCount = 0;
-
-    rows.forEach((row, rowIndex) => {
+    rows.forEach((row) => {
       const cells = row.querySelectorAll('td');
       if (cells.length <= deltaIndex || cells.length <= valueIndex) {
         return;
@@ -211,7 +258,6 @@
 
       const deltaCell = cells[deltaIndex];
       const valueCell = cells[valueIndex];
-
       if (!deltaCell || !valueCell) {
         return;
       }
@@ -227,34 +273,31 @@
       // Calculate unit price
       const unitPrice = calculateUnitPrice(value, delta);
 
-      // Create new cell
-      const newCell = document.createElement('td');
-      newCell.style.cssText = `
-        padding: 8px;
-        text-align: center;
-        font-family: monospace;
-        font-weight: bold;
-        border: 1px solid rgba(255,255,255,0.05);
-      `;
+      const newText = unitPrice !== null ? formatNumber(unitPrice) : '—';
+      const newColor = unitPrice !== null
+        ? (unitPrice > 0 ? '#52c41a' : unitPrice < 0 ? '#ff4d4f' : 'rgba(255,255,255,0.5)')
+        : 'rgba(255,255,255,0.3)';
 
-      if (unitPrice !== null) {
-        newCell.textContent = formatNumber(unitPrice);
-        
-        // Color coding based on value
-        if (unitPrice > 0) {
-          newCell.style.color = '#52c41a'; // Green for positive
-        } else if (unitPrice < 0) {
-          newCell.style.color = '#ff4d4f'; // Red for negative
-        } else {
-          newCell.style.color = 'rgba(255,255,255,0.5)';
-        }
-      } else {
-        newCell.textContent = '—';
-        newCell.style.color = 'rgba(255,255,255,0.3)';
+      // Locate the unit price cell: prefer the marker, fall back to position
+      let unitPriceCell = row.querySelector('td[data-unit-price="true"]');
+      if (!unitPriceCell && cells.length > unitPriceIndex) {
+        unitPriceCell = cells[unitPriceIndex];
       }
 
-      row.appendChild(newCell);
-      processedCount++;
+      // Newly added row without a unit price cell - append one
+      if (!unitPriceCell) {
+        unitPriceCell = document.createElement('td');
+        unitPriceCell.dataset.unitPrice = 'true';
+        unitPriceCell.style.cssText = UNIT_PRICE_CELL_STYLE;
+        row.appendChild(unitPriceCell);
+      }
+
+      // Only write to the DOM when the displayed value actually changed,
+      // so we don't feed mutations back into the observer
+      if (unitPriceCell.textContent !== newText) {
+        unitPriceCell.textContent = newText;
+        unitPriceCell.style.color = newColor;
+      }
     });
   }
 
@@ -264,42 +307,38 @@
   function debounce(func, wait) {
     let timeout;
     return function executedFunction(...args) {
-      const later = () => {
-        clearTimeout(timeout);
-        func(...args);
-      };
       clearTimeout(timeout);
-      timeout = setTimeout(later, wait);
+      timeout = setTimeout(() => func(...args), wait);
     };
   }
 
+  /**
+   * Locate the Material IO table and either add the unit price column
+   * or recalculate its values. Idempotent, safe to call repeatedly.
+   */
+  function processTable() {
+    const result = findMaterialIOTable();
+    if (!result) {
+      return;
+    }
+
+    if (!hasUnitPriceColumn(result.table)) {
+      addUnitPriceColumn(result.table, result.type);
+    } else {
+      updateUnitPriceCells(result.table, result.type);
+    }
+  }
+
   function init() {
-    const processTable = debounce(() => {
-      const result = findMaterialIOTable();
-      if (result) {
-        addUnitPriceColumn(result.table, result.type);
-      }
-    }, CONFIG.debounceDelay);
+    const processTableDebounced = debounce(processTable, CONFIG.debounceDelay);
 
     // Initial processing
-    processTable();
+    processTableDebounced();
 
-    // Observe DOM changes
-    const observer = new MutationObserver((mutations) => {
-      let shouldProcess = false;
-      
-      for (const mutation of mutations) {
-        if (mutation.addedNodes.length > 0 || 
-            mutation.type === 'characterData' ||
-            mutation.attributeName === 'class') {
-          shouldProcess = true;
-          break;
-        }
-      }
-      
-      if (shouldProcess) {
-        processTable();
-      }
+    // Observe DOM changes - any mutation may indicate the table data changed,
+    // so always re-process (debounce keeps this cheap)
+    const observer = new MutationObserver(() => {
+      processTableDebounced();
     });
 
     observer.observe(document.body, {
@@ -312,10 +351,7 @@
     // Retry mechanism for late-loading tables
     let retryCount = 0;
     const retryInterval = setInterval(() => {
-      const result = findMaterialIOTable();
-      if (result && !hasUnitPriceColumn(result.table)) {
-        addUnitPriceColumn(result.table, result.type);
-      }
+      processTableDebounced();
       
       retryCount++;
       if (retryCount >= CONFIG.maxRetries) {
